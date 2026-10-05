@@ -36,4 +36,31 @@ def run_checks(rt: Runtime) -> list[dict[str, str]]:
         )
     else:
         checks.append({"name": "inventory", "status": "ok", "detail": "stock above reorder level"})
+    loop = rt.level_loop
+    state = loop.status()
+    if state["mode"] == "normal":
+        checks.append({"name": "level_loop", "status": "ok", "detail": "level measured, closed loop active"})
+    elif state["mode"] == "degraded":
+        checks.append(
+            {
+                "name": "level_loop",
+                "status": "warn",
+                "detail": "level transmitter failed; conservative flow balance, no auto pump start",
+            }
+        )
+    else:
+        checks.append(
+            {
+                "name": "level_loop",
+                "status": "fail",
+                "detail": "safe hold: level estimate uncertainty exhausted, operator action required",
+            }
+        )
+    chain_ok, broken = loop.auditor.verify()
+    if chain_ok:
+        checks.append({"name": "level_audit", "status": "ok", "detail": "hash chain intact"})
+    else:
+        checks.append(
+            {"name": "level_audit", "status": "fail", "detail": f"hash chain broken at seq {broken}"}
+        )
     return checks

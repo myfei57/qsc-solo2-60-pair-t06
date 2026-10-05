@@ -45,6 +45,8 @@ class ConsoleCase(unittest.TestCase):
             "intake",
             "ph",
             "inventory",
+            "level_loop",
+            "level_audit",
         })
 
         status, snapshot = self.call("GET", "/snapshot")
@@ -62,6 +64,7 @@ class ConsoleCase(unittest.TestCase):
                 "turbidity",
                 "flow",
                 "clearwell",
+                "level_loop",
                 "quota",
                 "audit",
                 "ph",
@@ -333,6 +336,52 @@ class ConsoleCase(unittest.TestCase):
         self.assertTrue(body["reset"])
         _, body = self.call("GET", "/metrics")
         self.assertEqual(body["requests"], 1)
+
+    def test_level_loop_routes(self) -> None:
+        status, body = self.call("GET", "/clearwell/level-loop")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["mode"], "normal")
+        self.assertEqual(body["policy"]["limits_basis"], "fixed fractions of effective tank volume")
+
+        status, body = self.call("GET", "/clearwell/level-loop/band")
+        self.assertEqual(status, 200)
+        self.assertIn("hh_m", body["band"])
+
+        # Shift usage may move the target but not the interlocks.
+        status, body = self.call("POST", "/clearwell/level-loop/target", {"target": 2.3})
+        self.assertEqual(status, 200)
+        self.assertAlmostEqual(body["target_m"], 2.3)
+        status, body = self.call("POST", "/clearwell/level-loop/target", {"target": 3.99})
+        self.assertEqual(status, 400)
+
+        payload = {"level": 2.0, "inflow": 50.0, "outflow": 50.0, "demand": 50.0, "tick_s": 60}
+        status, body = self.call("POST", "/clearwell/level-loop/tick", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["phase_log"], [
+            "read_inputs", "confirm_pumps", "decide_valves", "dispatch",
+        ])
+
+        # A failed transmitter is a partial failure handled conservatively.
+        status, body = self.call("POST", "/clearwell/level-loop/tick", {
+            "level": 2.0, "level_ok": False, "inflow": 50, "outflow": 50, "tick_s": 60,
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(body["mode"], "degraded")
+
+        status, body = self.call("GET", "/clearwell/level-loop/audit")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["count"], 2)
+        self.assertEqual(body["entries"][-1]["decision"]["reason"], "level_fault")
+
+        status, body = self.call("GET", "/clearwell/level-loop/audit/verify")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+
+    def test_level_loop_demo_route(self) -> None:
+        status, body = self.call("POST", "/clearwell/level-loop/demo", {"ticks": 30})
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["ticks"]), 30)
+        self.assertTrue(body["audit_ok"])
 
     def test_export_routes(self) -> None:
         self.call("POST", "/coag/dose", {"flow": 5.0})

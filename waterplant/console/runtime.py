@@ -5,7 +5,7 @@ from __future__ import annotations
 from waterplant.audit import Auditor
 from waterplant.backwash import Controller
 from waterplant.chlor import Doser as ChlorDoser
-from waterplant.clearwell import Well
+from waterplant.clearwell import LevelLoop, Well
 from waterplant.coag import Doser as CoagDoser
 from waterplant.filter import Bank
 from waterplant.flow import Calibration
@@ -35,6 +35,7 @@ class Runtime:
         self.sampler = Sampler(coag_doser)
         self.calibration = Calibration(store)
         self.well = Well(store)
+        self.level_loop = LevelLoop(store)
         self.accumulator = Accumulator(store)
         self.auditor = Auditor(store)
         self.stabilizer = Stabilizer(store)

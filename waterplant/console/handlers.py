@@ -19,6 +19,7 @@ from waterplant.store import export_state
 
 from . import checks, history, ops
 from . import describe as describe_module
+from . import levelctl
 from . import simulate as simulate_module
 from . import snapshot as snapshot_module
 from . import telemetry as telemetry_module
@@ -159,6 +160,34 @@ def clearwell_level(server: "Server", request: Request) -> Response:
     runtime = server.runtime
     minimum = runtime.well.adjust_level(target, runtime.inlet, runtime.outlet)
     return json_response({"min_level": minimum, "level": runtime.well.level()})
+
+
+def clearwell_level_state(server: "Server", request: Request) -> Response:
+    return levelctl.level_state(server.runtime, request)
+
+
+def clearwell_level_band(server: "Server", request: Request) -> Response:
+    return levelctl.level_band(server.runtime, request)
+
+
+def clearwell_level_target(server: "Server", request: Request) -> Response:
+    return levelctl.level_target(server.runtime, request)
+
+
+def clearwell_level_tick(server: "Server", request: Request) -> Response:
+    return levelctl.level_tick(server.runtime, request)
+
+
+def clearwell_level_audit(server: "Server", request: Request) -> Response:
+    return levelctl.level_audit(server.runtime, request)
+
+
+def clearwell_level_audit_verify(server: "Server", request: Request) -> Response:
+    return levelctl.level_audit_verify(server.runtime, request)
+
+
+def clearwell_level_demo(server: "Server", request: Request) -> Response:
+    return levelctl.level_demo(server.runtime, request)
 
 
 def filter_add(server: "Server", request: Request) -> Response:

@@ -28,6 +28,18 @@ def text_report(rt: Runtime) -> str:
         f"turbidity: {describe['turbidity']}",
         f"flow: {describe['flow']}",
         f"clearwell: {describe['clearwell']}",
+        (
+            f"level_loop mode={rt.level_loop.mode.value} target={rt.level_loop.band.target_m:.3f}m "
+            f"band=[{rt.level_loop.band.ll_m:.3f},{rt.level_loop.band.l_m:.3f},"
+            f"{rt.level_loop.band.h_m:.3f},{rt.level_loop.band.hh_m:.3f}]m "
+            f"volume={rt.level_loop.config.effective_volume_m3:.1f}m3"
+        ),
+        (
+            f"level_loop valves inlet={rt.level_loop.valves.inlet.position_pct:.1f}% "
+            f"outlet={rt.level_loop.valves.outlet.position_pct:.1f}% "
+            f"pumps_running={rt.level_loop.pumps.snapshot().running_count} "
+            f"transition={rt.level_loop.pumps.in_transition()}"
+        ),
         f"quota: {describe['quota']}",
         f"audit: {describe['audit']}",
         f"audit kinds={rt.auditor.kinds()}",
