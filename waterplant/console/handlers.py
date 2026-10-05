@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from waterplant.chlor import validate_demand
-from waterplant.clearwell import validate_level
+from waterplant.clearwell import (
+    PumpSpec,
+    PumpTelemetry,
+    validate_capacity,
+    validate_level,
+)
 from waterplant.filter import validate_zone
 from waterplant.flow import calibrate_meter, validate_factor
 from waterplant.intake import DEFAULT_WINDOW, Sensor, validate_flow
@@ -153,12 +158,73 @@ def chlor_dose(server: "Server", request: Request) -> Response:
     return json_response({"dose": server.runtime.chlor_doser.apply_residual()})
 
 
+def _optional_float(request: Request, name: str) -> float | None:
+    value = request.payload.get(name)
+    if value is None:
+        return None
+    return request.float_field(name)
+
+
 def clearwell_level(server: "Server", request: Request) -> Response:
     target = request.float_field("target")
     validate_level(target)
     runtime = server.runtime
     minimum = runtime.well.adjust_level(target, runtime.inlet, runtime.outlet)
     return json_response({"min_level": minimum, "level": runtime.well.level()})
+
+
+def clearwell_loop_state(server: "Server", request: Request) -> Response:
+    return json_response(server.runtime.level_loop.state())
+
+
+def clearwell_control(server: "Server", request: Request) -> Response:
+    decision = server.runtime.level_loop.control(request.payload)
+    return json_response(decision.as_dict())
+
+
+def clearwell_history(server: "Server", request: Request) -> Response:
+    return json_response({"decisions": server.runtime.level_loop.history()})
+
+
+def clearwell_config(server: "Server", request: Request) -> Response:
+    config = server.runtime.level_loop.set_config(
+        capacity=_optional_float(request, "capacity"),
+        target_level=_optional_float(request, "target_level"),
+        inlet_max=_optional_float(request, "inlet_max"),
+        horizon_seconds=_optional_float(request, "horizon_seconds"),
+    )
+    return json_response(config.as_dict())
+
+
+def clearwell_pumps(server: "Server", request: Request) -> Response:
+    return json_response(server.runtime.pumps.state())
+
+
+def clearwell_pump_confirm(server: "Server", request: Request) -> Response:
+    readings = request.payload.get("pumps", [])
+    if not isinstance(readings, list):
+        raise ValueError("pumps must be a list")
+    confirmed = server.runtime.pumps.confirm(
+        [PumpTelemetry.from_payload(item) for item in readings if isinstance(item, dict)]
+    )
+    return json_response({"pumps": [status.as_dict() for status in confirmed]})
+
+
+def clearwell_pump_specs(server: "Server", request: Request) -> Response:
+    raw = request.payload.get("pumps", [])
+    if not isinstance(raw, list):
+        raise ValueError("pumps must be a list")
+    specs: list[PumpSpec] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("each pump must be an object")
+        pump_id = str(item.get("id", ""))
+        minimum = float(item.get("min_flow", 0.0))
+        maximum = float(item.get("max_flow", 0.0))
+        validate_capacity(maximum)
+        specs.append(PumpSpec(pump_id, minimum, maximum))
+    server.runtime.pumps.replace_specs(specs)
+    return json_response({"pumps": [spec.as_dict() for spec in specs]})
 
 
 def filter_add(server: "Server", request: Request) -> Response:

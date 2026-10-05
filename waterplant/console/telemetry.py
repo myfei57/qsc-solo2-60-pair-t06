@@ -21,6 +21,14 @@ class Telemetry:
     audit_entries: int
     quota_value: float
     clearwell_level: float
+    level_sensor_available: bool
+    level_protection: str
+    level_loop_status: str
+    pump_confirmed: bool
+    pump_min_flow: float
+    pump_max_flow: float
+    inlet_command: float
+    outlet_command: float
     coag_ratio: float
     chlor_target: float
     turbidity_verdict: float
@@ -43,6 +51,14 @@ class Telemetry:
             "audit_entries": self.audit_entries,
             "quota_value": self.quota_value,
             "clearwell_level": self.clearwell_level,
+            "level_sensor_available": self.level_sensor_available,
+            "level_protection": self.level_protection,
+            "level_loop_status": self.level_loop_status,
+            "pump_confirmed": self.pump_confirmed,
+            "pump_min_flow": self.pump_min_flow,
+            "pump_max_flow": self.pump_max_flow,
+            "inlet_command": self.inlet_command,
+            "outlet_command": self.outlet_command,
             "coag_ratio": self.coag_ratio,
             "chlor_target": self.chlor_target,
             "turbidity_verdict": self.turbidity_verdict,
@@ -58,6 +74,14 @@ class Telemetry:
 def collect(rt: Runtime) -> Telemetry:
     """Read every counter without mutating the control state."""
 
+    loop = rt.level_loop.state()
+    last_decision = loop.get("last_decision")
+    if not isinstance(last_decision, dict):
+        last_decision = {}
+    inlet = last_decision.get("inlet_command", {})
+    outlet = last_decision.get("outlet_command", {})
+    pumps = loop.get("pumps", {})
+
     return Telemetry(
         store_keys=rt.store.count(),
         filter_beds=rt.bank.count(),
@@ -69,6 +93,14 @@ def collect(rt: Runtime) -> Telemetry:
         audit_entries=rt.auditor.count(),
         quota_value=rt.accumulator.value(),
         clearwell_level=rt.well.level(),
+        level_sensor_available=bool(loop.get("sensor_available", False)),
+        level_protection=str(last_decision.get("protection", "none")),
+        level_loop_status=str(last_decision.get("status", "idle")),
+        pump_confirmed=bool(pumps.get("confirmed", False)),
+        pump_min_flow=float(pumps.get("min_flow", 0.0)),
+        pump_max_flow=float(pumps.get("max_flow", 0.0)),
+        inlet_command=float(inlet.get("flow", 0.0)) if isinstance(inlet, dict) else 0.0,
+        outlet_command=float(outlet.get("flow", 0.0)) if isinstance(outlet, dict) else 0.0,
         coag_ratio=rt.coag_doser.current_ratio(),
         chlor_target=rt.chlor_doser.current_target(),
         turbidity_verdict=rt.sampler.state().last_verdict,

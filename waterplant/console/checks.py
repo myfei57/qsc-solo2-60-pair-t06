@@ -17,6 +17,13 @@ def run_checks(rt: Runtime) -> list[dict[str, str]]:
         checks.append({"name": "residual", "status": "fail", "detail": "target must be positive"})
     else:
         checks.append({"name": "residual", "status": "ok", "detail": "target set"})
+    loop = rt.level_loop.state()
+    if not loop["sensor_available"]:
+        checks.append({"name": "level", "status": "warn", "detail": "level sensor in conservative mode"})
+    elif not loop["pumps"]["confirmed"]:
+        checks.append({"name": "level", "status": "warn", "detail": "waiting for pump acknowledgement"})
+    else:
+        checks.append({"name": "level", "status": "ok", "detail": "closed loop active"})
     if rt.accumulator.value() < 0:
         checks.append({"name": "quota", "status": "fail", "detail": "accumulator is negative"})
     else:

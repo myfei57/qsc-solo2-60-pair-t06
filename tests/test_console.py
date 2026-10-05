@@ -39,6 +39,7 @@ class ConsoleCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual({check["name"] for check in checks["checks"]}, {
             "store",
+            "level",
             "calibration",
             "residual",
             "quota",
@@ -62,6 +63,7 @@ class ConsoleCase(unittest.TestCase):
                 "turbidity",
                 "flow",
                 "clearwell",
+                "level_loop",
                 "quota",
                 "audit",
                 "ph",
@@ -148,6 +150,55 @@ class ConsoleCase(unittest.TestCase):
         status, body = self.call("POST", "/clearwell/level", {"target": 12.0})
         self.assertEqual(body["level"], 12.0)
         self.assertEqual(body["min_level"], 0.0)
+
+    def test_clearwell_closed_loop_audit_and_idempotency(self) -> None:
+        pumps = [
+            {"id": "p1", "running": True, "available": True, "confirmed": True, "flow": 20.0},
+            {"id": "p2", "running": False, "available": True, "confirmed": True, "flow": 0.0},
+        ]
+        payload = {
+            "request_id": "loop-1",
+            "level": 950.0,
+            "inflow": 50.0,
+            "outflow": 20.0,
+            "interval": 300.0,
+            "pumps": pumps,
+        }
+        status, body = self.call("POST", "/clearwell/control", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "applied")
+        self.assertEqual(body["protection"], "high")
+        self.assertEqual(body["capacity"], 1000.0)
+        self.assertEqual(body["min_level"], 100.0)
+        self.assertEqual(body["high_level"], 900.0)
+        self.assertFalse(body["idempotent_replay"])
+
+        status, replay = self.call("POST", "/clearwell/control", payload)
+        self.assertEqual(status, 200)
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(replay["inlet_command"]["flow"], body["inlet_command"]["flow"])
+
+        failed_payload = dict(payload)
+        failed_payload["request_id"] = "loop-failed"
+        failed_payload["level"] = None
+        status, failed = self.call("POST", "/clearwell/control", failed_payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(failed["status"], "conservative")
+        self.assertIsNone(failed["pump_command"])
+        self.assertEqual(failed["last_good_level"], 950.0)
+
+        status, state = self.call("GET", "/clearwell/loop")
+        self.assertEqual(status, 200)
+        self.assertFalse(state["sensor_available"])
+        self.assertEqual(state["config"]["limit_basis"], "pool_capacity")
+
+        status, history = self.call("GET", "/clearwell/history")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(history["decisions"]), 2)
+
+        status, audit = self.call("POST", "/audit/filter", {"kind": "clearwell"})
+        self.assertEqual(status, 200)
+        self.assertEqual(len(audit["entries"]), 2)
 
     def test_filter_and_backwash_routes(self) -> None:
         for bed_id, zone, load in (("b1", 1, 4.0), ("b2", 2, 9.0), ("b3", 3, 1.0)):

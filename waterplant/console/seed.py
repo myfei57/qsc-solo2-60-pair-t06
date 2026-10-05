@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from waterplant.clearwell import Well
+from waterplant.audit import Auditor
+from waterplant.clearwell import LevelLoop, PumpGroup, PumpSpec, Well
 from waterplant.flow import Calibration
 from waterplant.intake import DEFAULT_WINDOW, WINDOW_KEY, FlowRepository, Trend
 from waterplant.ph import DEFAULT_PH, PH_KEY, Stabilizer
@@ -23,6 +24,17 @@ def seed_defaults(store: Store) -> None:
     well = Well(store)
     if well.residual_target() <= 0:
         well.set_residual_target(0.5)
+
+    pumps = PumpGroup(store)
+    if not has_key(store, "clearwell:pump-specs"):
+        pumps.replace_specs(
+            [
+                PumpSpec("p1", 10.0, 50.0),
+                PumpSpec("p2", 10.0, 50.0),
+            ]
+        )
+    if not has_key(store, "clearwell:level-config"):
+        LevelLoop(store, pumps, Auditor(store)).set_config()
 
     repository = FlowRepository(store)
     if not repository.load_flow()[1]:

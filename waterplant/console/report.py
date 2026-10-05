@@ -28,6 +28,8 @@ def text_report(rt: Runtime) -> str:
         f"turbidity: {describe['turbidity']}",
         f"flow: {describe['flow']}",
         f"clearwell: {describe['clearwell']}",
+        f"level loop: {describe['level_loop']}",
+        f"level limits basis=pool_capacity min={rt.level_loop.config().min_level:.4f} high={rt.level_loop.config().high_level:.4f}",
         f"quota: {describe['quota']}",
         f"audit: {describe['audit']}",
         f"audit kinds={rt.auditor.kinds()}",

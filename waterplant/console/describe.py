@@ -22,6 +22,7 @@ def collect(rt: Runtime) -> dict[str, str]:
         "turbidity": rt.sampler.describe(),
         "flow": rt.calibration.describe(),
         "clearwell": rt.well.describe(),
+        "level_loop": f"level loop {rt.level_loop.state()['config']} pumps: {rt.pumps.describe()}",
         "quota": rt.accumulator.describe(),
         "audit": rt.auditor.describe(),
         "ph": rt.stabilizer.describe(),

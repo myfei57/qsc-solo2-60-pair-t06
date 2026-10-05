@@ -9,7 +9,14 @@ from waterplant.audit import Auditor
 from waterplant.backwash import Controller
 from waterplant.chlor import Doser as ChlorDoser
 from waterplant.chlor import validate_demand
-from waterplant.clearwell import Well, validate_level
+from waterplant.clearwell import (
+    LevelLoop,
+    PumpGroup,
+    PumpSpec,
+    PumpTelemetry,
+    Well,
+    validate_level,
+)
 from waterplant.coag import Doser as CoagDoser
 from waterplant.filter import Bank, validate_zone
 from waterplant.flow import Calibration, calibrate_meter, validate_factor
@@ -217,6 +224,158 @@ class ClearwellCase(unittest.TestCase):
             validate_level(-0.5)
         with self.assertRaises(ValueError):
             validate_level(2_000_000.0)
+
+
+class LevelLoopCase(unittest.TestCase):
+    def _loop(self, store: Store) -> LevelLoop:
+        auditor = Auditor(store)
+        pumps = PumpGroup(store)
+        pumps.replace_specs([PumpSpec("p1", 10.0, 50.0), PumpSpec("p2", 10.0, 50.0)])
+        loop = LevelLoop(store, pumps, auditor)
+        loop.set_config(capacity=1000.0, target_level=500.0, inlet_max=100.0)
+        return loop
+
+    def _pumps(self, first: bool = True, second: bool = False) -> list[PumpTelemetry]:
+        return [
+            PumpTelemetry("p1", running=first, available=True, confirmed=True, flow=20.0 if first else 0.0),
+            PumpTelemetry("p2", running=second, available=True, confirmed=True, flow=20.0 if second else 0.0),
+        ]
+
+    def test_pump_acknowledgement_precedes_valve_math(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store.open(f"{tmp}/state.json")
+            loop = self._loop(store)
+            decision = loop.control(
+                {"request_id": "hold", "level": 500.0, "inflow": 50.0, "outflow": 20.0}
+            )
+            self.assertEqual(decision.status, "pumps_unconfirmed")
+            self.assertEqual(decision.inlet_command.flow, 50.0)
+            self.assertEqual(decision.outlet_command.flow, 20.0)
+            self.assertIn("pump_state_unconfirmed", decision.reasons)
+
+    def test_flow_balance_prefers_inlet_and_limits_outlet_trim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store.open(f"{tmp}/state.json")
+            loop = self._loop(store)
+            decision = loop.control(
+                {
+                    "request_id": "balance",
+                    "level": 500.0,
+                    "inflow": 30.0,
+                    "outflow": 20.0,
+                    "interval": 300.0,
+                    "pumps": self._pumps(),
+                }
+            )
+            self.assertEqual(decision.status, "applied")
+            self.assertEqual(decision.imbalance, 10.0)
+            self.assertEqual(decision.desired_net_flow, 0.0)
+            self.assertGreater(abs(30.0 - decision.inlet_command.flow), 0.0)
+            self.assertEqual(decision.outlet_command.flow, 20.0)
+            self.assertIn("inlet_first", decision.reasons)
+
+    def test_high_and_low_limits_are_capacity_protections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store.open(f"{tmp}/state.json")
+            loop = self._loop(store)
+            high = loop.control(
+                {
+                    "request_id": "high",
+                    "level": 950.0,
+                    "inflow": 50.0,
+                    "outflow": 20.0,
+                    "interval": 300.0,
+                    "pumps": self._pumps(),
+                }
+            )
+            self.assertEqual(high.protection, "high")
+            self.assertLess(high.desired_net_flow, 0.0)
+            self.assertLess(high.inlet_command.flow, 50.0)
+            self.assertGreater(high.outlet_command.flow, 20.0)
+            self.assertEqual(high.min_level, 100.0)
+            self.assertEqual(high.high_level, 900.0)
+
+            loop.control(
+                {
+                    "request_id": "recover",
+                    "level": 500.0,
+                    "inflow": 20.0,
+                    "outflow": 20.0,
+                    "interval": 300.0,
+                    "pumps": self._pumps(),
+                }
+            )
+            low = loop.control(
+                {
+                    "request_id": "low",
+                    "level": 50.0,
+                    "inflow": 10.0,
+                    "outflow": 50.0,
+                    "interval": 300.0,
+                    "pumps": self._pumps(True),
+                }
+            )
+            self.assertEqual(low.protection, "low")
+            self.assertGreater(low.desired_net_flow, 0.0)
+            self.assertGreater(low.inlet_command.flow, 10.0)
+            self.assertLess(low.outlet_command.flow, 50.0)
+
+    def test_sensor_failure_is_conservative_and_replay_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store.open(f"{tmp}/state.json")
+            loop = self._loop(store)
+            good = loop.control(
+                {
+                    "request_id": "good",
+                    "level": 920.0,
+                    "inflow": 50.0,
+                    "outflow": 20.0,
+                    "interval": 300.0,
+                    "pumps": self._pumps(),
+                }
+            )
+            self.assertTrue(good.sensor_available)
+            failure_payload = {
+                "request_id": "failed",
+                "level": None,
+                "inflow": 50.0,
+                "outflow": 20.0,
+                "interval": 300.0,
+                "pumps": self._pumps(),
+            }
+            failed = loop.control(failure_payload)
+            self.assertEqual(failed.status, "conservative")
+            self.assertEqual(failed.last_good_level, 920.0)
+            self.assertIsNone(failed.pump_command)
+            self.assertIn("pump_start_stop_inhibited", failed.reasons)
+            history_count = len(loop.history())
+            audit_count = Auditor(store).count()
+            replay = loop.control(failure_payload)
+            self.assertTrue(replay.idempotent_replay)
+            self.assertEqual(replay.inlet_command.flow, failed.inlet_command.flow)
+            self.assertEqual(len(loop.history()), history_count)
+            self.assertEqual(Auditor(store).count(), audit_count)
+
+    def test_large_swing_presses_rate_without_relaxing_limits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store.open(f"{tmp}/state.json")
+            loop = self._loop(store)
+            pumps = self._pumps()
+            for index, level in enumerate((500.0, 400.0, 520.0)):
+                decision = loop.control(
+                    {
+                        "request_id": f"swing-{index}",
+                        "level": level,
+                        "inflow": 30.0,
+                        "outflow": 20.0,
+                        "interval": 300.0,
+                        "pumps": pumps,
+                    }
+                )
+            self.assertTrue(decision.volatile)
+            self.assertEqual(decision.min_level, 100.0)
+            self.assertEqual(decision.high_level, 900.0)
+            self.assertIn("volatile_level_slew_rate_pressed", decision.reasons)
 
 
 class FilterCase(unittest.TestCase):

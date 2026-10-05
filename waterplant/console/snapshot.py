@@ -22,6 +22,7 @@ def collect(rt: Runtime) -> dict[str, object]:
         "turbidity": rt.sampler.state().as_dict(),
         "flow": rt.calibration.state().as_dict(),
         "clearwell": rt.well.state().as_dict(),
+        "level_loop": rt.level_loop.state(),
         "quota": rt.accumulator.state().as_dict(),
         "audit": rt.auditor.state().as_dict(),
         "ph": rt.stabilizer.state().as_dict(),
